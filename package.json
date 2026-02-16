@@ -10,8 +10,8 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "build": "prisma generate && nest build",
 
-    "start": "node -e \"const fs=require('fs');const path=require('path');const cp=require('child_process');const exists=(p)=>fs.existsSync(p)&&fs.statSync(p).isFile();const run=(cmd)=>cp.execSync(cmd,{stdio:'inherit'});if(!fs.existsSync('dist')){console.log('dist/ not found -> running build...');run('npm run build');}const candidates=['dist/main.js','dist/main.mjs','dist/main.cjs','dist/src/main.js','dist/src/main.mjs','dist/src/main.cjs'];let entry=candidates.find(exists);if(!entry){const found=[];const walk=(dir)=>{for(const n of fs.readdirSync(dir)){const p=path.join(dir,n);const st=fs.statSync(p);if(st.isDirectory()) walk(p); else {const b=path.basename(p); if(b==='main.js'||b==='main.mjs'||b==='main.cjs') found.push(p);}}};walk('dist');entry=found[0];}if(!entry){console.error('❌ Could not find main entry inside dist/. Run: npm run build and inspect dist/.');process.exit(1);}console.log('▶ starting (require):', entry);process.on('uncaughtException',(e)=>{console.error('🔥 uncaughtException');console.error(e);process.exit(1);});process.on('unhandledRejection',(e)=>{console.error('🔥 unhandledRejection');console.error(e);process.exit(1);});try{require(path.resolve(entry));}catch(e){console.error('🔥 start failed');console.error(e);process.exit(1);}\"",
-
+    "start": "node dist/src/main.js",
+    "start:prod": "node dist/src/main.js",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
 
