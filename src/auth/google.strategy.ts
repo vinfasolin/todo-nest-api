@@ -11,25 +11,33 @@ type GooglePayload = {
 
 @Injectable()
 export class GoogleIdTokenVerifier {
+  // fallback (o que você já tinha)
   private static readonly FALLBACK_CLIENT_ID =
     '764728744073-4h8l7638uom853plt0hdsicn9avugf3p.apps.googleusercontent.com';
 
   private readonly client: OAuth2Client;
-  private readonly audience: string;
+  private readonly audiences: string[];
 
   constructor() {
-    this.audience = process.env.GOOGLE_CLIENT_ID || GoogleIdTokenVerifier.FALLBACK_CLIENT_ID;
-    this.client = new OAuth2Client(this.audience);
+    const envClient = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+
+    // ✅ aceita o client do .env + fallback (sem duplicar e sem vazios)
+    this.audiences = [envClient, GoogleIdTokenVerifier.FALLBACK_CLIENT_ID]
+      .filter(Boolean)
+      .filter((v, i, arr) => arr.indexOf(v) === i);
+
+    // ✅ não “trava” no audience no construtor; passa no verifyIdToken
+    this.client = new OAuth2Client();
   }
 
   async verify(idToken: string): Promise<GooglePayload> {
-    const token = (idToken || '').trim();
+    const token = String(idToken || '').trim();
     if (!token) throw new UnauthorizedException('Missing Google ID token');
 
     try {
       const ticket = await this.client.verifyIdToken({
         idToken: token,
-        audience: this.audience,
+        audience: this.audiences, // ✅ aceita string[]
       });
 
       const payload = ticket.getPayload() as any;
@@ -43,9 +51,19 @@ export class GoogleIdTokenVerifier {
         email: String(payload.email),
         name: payload.name ? String(payload.name) : undefined,
         picture: payload.picture ? String(payload.picture) : undefined,
-        email_verified: typeof payload.email_verified === 'boolean' ? payload.email_verified : undefined,
+        email_verified:
+          typeof payload.email_verified === 'boolean'
+            ? payload.email_verified
+            : undefined,
       };
-    } catch {
+    } catch (err: any) {
+      // ✅ loga o motivo real sem vazar token
+      console.error('Google ID token verify failed:', {
+        name: err?.name,
+        message: err?.message,
+        audiences: this.audiences,
+      });
+
       throw new UnauthorizedException('Invalid or expired Google ID token');
     }
   }

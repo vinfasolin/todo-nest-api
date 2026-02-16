@@ -2,14 +2,7 @@ import 'dotenv/config';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
-
-// ✅ Import do PrismaClient do pacote padrão
-// Se o client não foi gerado, o build vai quebrar de qualquer forma.
-// Este import é o correto para o seu projeto "funcionando local".
 import { PrismaClient } from '@prisma/client';
-
-// ✅ Garante que o client runtime seja carregado (ajuda em alguns cenários de build/TS)
-import '@prisma/client/runtime/library';
 
 @Injectable()
 export class PrismaService
@@ -39,15 +32,11 @@ export class PrismaService
   }
 
   async onModuleInit() {
-    // aqui $connect existe quando PrismaClient está OK/gerado
     await this.$connect();
   }
 
   async onModuleDestroy() {
     await this.$disconnect();
-
-    // Encerrar pool pode ser ok. Se tiver restart automático, pode ser melhor não encerrar.
-    // Vou manter (como no seu original), mas de forma segura:
     await PrismaService.pool?.end().catch(() => undefined);
     PrismaService.pool = null;
   }
