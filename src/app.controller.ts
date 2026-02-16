@@ -1,12 +1,22 @@
 import { Controller, Get } from '@nestjs/common';
-import { AppService } from './app.service';
+import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  hello() {
+    return 'OK';
+  }
+
+  @Get('db')
+  async dbTest() {
+    const rows = await this.prisma.playingWithNeon.findMany({
+      take: 5,
+      orderBy: { id: 'desc' },
+    });
+
+    return { ok: true, rows };
   }
 }

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
@@ -9,7 +10,6 @@ async function bootstrap() {
   // Render precisa que o app escute em 0.0.0.0 (não localhost)
   await app.listen(port, '0.0.0.0');
 
-  // opcional: log pra conferir no deploy
   console.log(`🚀 API running on port ${port}`);
 }
 

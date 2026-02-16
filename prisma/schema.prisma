@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Prisma 7: a URL vem do prisma.config.ts (env DATABASE_URL)
+}
+
+model PlayingWithNeon {
+  id    Int     @id @default(autoincrement())
+  name  String
+  value Float?  @db.Real
+
+  @@map("playing_with_neon")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  googleSub String   @unique
+  email     String   @unique
+  name      String?
+  picture   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  todos     Todo[]
+}
+
+model Todo {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  done        Boolean  @default(false)
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
