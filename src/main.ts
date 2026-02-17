@@ -19,6 +19,11 @@ function parseCorsOrigins(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function normalizeOrigin(o: string) {
+  // remove "/" final e normaliza
+  return String(o || '').trim().replace(/\/$/, '');
+}
+
 async function bootstrap() {
   // garante que qualquer crash apareça no terminal
   process.on('uncaughtException', (err) => logFatal(err, 'uncaughtException'));
@@ -33,7 +38,7 @@ async function bootstrap() {
   // ✅ Origens permitidas (Render deve setar CORS_ORIGINS)
   const envOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
 
-  // ✅ fallback local (se não setar nada no Render/local)
+  // ✅ fallback local (se não setar nada)
   // Inclui Vite (5173/5179) e Expo Web (8081)
   const fallbackOrigins = [
     'http://localhost:5173',
@@ -44,14 +49,18 @@ async function bootstrap() {
     'http://127.0.0.1:8081',
   ];
 
-  const allowedOrigins = envOrigins.length ? envOrigins : fallbackOrigins;
+  const allowedOrigins = (envOrigins.length ? envOrigins : fallbackOrigins).map(
+    normalizeOrigin,
+  );
 
-  // ✅ Middleware CORS "na unha" (garante preflight OPTIONS SEM 404)
+  const allowedSet = new Set(allowedOrigins);
+
+  // ✅ CORS "na unha" (robusto e garante preflight OPTIONS sem 404)
   app.use((req: Request, res: Response, next: NextFunction) => {
-    const origin = String(req.headers.origin || '');
+    const origin = normalizeOrigin(String(req.headers.origin || ''));
 
     // Se o origin estiver na lista permitida, devolve ele; senão não seta nada.
-    if (origin && allowedOrigins.includes(origin)) {
+    if (origin && allowedSet.has(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin'); // importante p/ cache/CDN
     }
@@ -66,7 +75,7 @@ async function bootstrap() {
     );
     res.setHeader('Access-Control-Max-Age', '86400');
 
-    // ✅ Responde preflight SEM cair em controller (evita "Cannot OPTIONS ...")
+    // ✅ Responde preflight sem cair em controller
     if (req.method === 'OPTIONS') {
       return res.status(204).send();
     }
@@ -74,33 +83,12 @@ async function bootstrap() {
     return next();
   });
 
-  // ✅ Também habilita CORS do Nest (complementa)
-  app.enableCors({
-    origin: (origin, cb) => {
-      // requests sem Origin (curl/postman) devem passar
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(null, false);
-    },
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', 'authorization'],
-    credentials: false,
-    optionsSuccessStatus: 204,
-    maxAge: 86400,
-  });
-
   // Log seguro (não expõe segredos)
   console.log('ENV:', {
     PORT: port,
-    HAS_DATABASE_URL: Boolean(
-      process.env.DATABASE_URL && process.env.DATABASE_URL.trim(),
-    ),
-    HAS_JWT_SECRET: Boolean(
-      process.env.JWT_SECRET && process.env.JWT_SECRET.trim(),
-    ),
-    HAS_GOOGLE_CLIENT_ID: Boolean(
-      process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_ID.trim(),
-    ),
+    HAS_DATABASE_URL: Boolean(process.env.DATABASE_URL?.trim()),
+    HAS_JWT_SECRET: Boolean(process.env.JWT_SECRET?.trim()),
+    HAS_GOOGLE_CLIENT_ID: Boolean(process.env.GOOGLE_CLIENT_ID?.trim()),
     CORS_ORIGINS: allowedOrigins,
   });
 
