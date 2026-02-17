@@ -33,8 +33,16 @@ async function bootstrap() {
   // ✅ Origens permitidas (Render deve setar CORS_ORIGINS)
   const envOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
 
-  // fallback local (se não setar nada)
-  const fallbackOrigins = ['http://localhost:5179', 'http://127.0.0.1:5179'];
+  // ✅ fallback local (se não setar nada no Render/local)
+  // Inclui Vite (5173/5179) e Expo Web (8081)
+  const fallbackOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:5179',
+    'http://127.0.0.1:5179',
+    'http://localhost:8081',
+    'http://127.0.0.1:8081',
+  ];
 
   const allowedOrigins = envOrigins.length ? envOrigins : fallbackOrigins;
 
@@ -66,7 +74,7 @@ async function bootstrap() {
     return next();
   });
 
-  // ✅ Também habilita CORS do Nest (não atrapalha; complementa)
+  // ✅ Também habilita CORS do Nest (complementa)
   app.enableCors({
     origin: (origin, cb) => {
       // requests sem Origin (curl/postman) devem passar
