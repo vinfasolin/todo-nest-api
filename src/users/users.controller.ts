@@ -1,7 +1,7 @@
 import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard, AuthUser } from '../auth/jwt.guard';
-
+//src/users/users.controller.ts
 @Controller()
 export class UsersController {
   constructor(private readonly prisma: PrismaService) {}

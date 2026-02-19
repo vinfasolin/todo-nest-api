@@ -4,7 +4,7 @@ import { AppModule } from './app.module';
 
 // Tipos do Express (já existe no projeto via @types/express)
 import type { Request, Response, NextFunction } from 'express';
-
+//src/main.ts
 function logFatal(err: unknown, origin: string) {
   console.error(`\n🔥 FATAL (${origin})`);
   console.error(err);

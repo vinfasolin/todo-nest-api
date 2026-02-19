@@ -11,7 +11,7 @@ export type AuthUser = {
   sub: string;
   email?: string;
 };
-
+//src/auth/jwt.guard.ts
 declare global {
   // permite usar req.user com tipagem
   // eslint-disable-next-line no-var

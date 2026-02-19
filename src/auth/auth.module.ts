@@ -9,7 +9,6 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [
     PrismaModule,
     JwtModule.register({
-      // ✅ Em produção: defina JWT_SECRET no Render
       secret: process.env.JWT_SECRET || 'dev-secret-change-me',
       signOptions: { expiresIn: '7d' },
     }),

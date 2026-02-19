@@ -34,7 +34,7 @@ export class PrismaService
   async onModuleInit() {
     await this.$connect();
   }
-
+  //src/prisma/prisma.service.ts
   async onModuleDestroy() {
     await this.$disconnect();
     await PrismaService.pool?.end().catch(() => undefined);

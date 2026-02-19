@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { OAuth2Client } from 'google-auth-library';
-
+//src/auth/google.strategy.ts
 type GooglePayload = {
   sub: string;
   email: string;
