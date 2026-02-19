@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  //prisma/schema.prisma
 }
 
 datasource db {
@@ -16,15 +17,16 @@ model PlayingWithNeon {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  googleSub String   @unique
-  email     String   @unique
-  name      String?
-  picture   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  googleSub    String?  @unique
+  email        String   @unique
+  name         String?
+  picture      String?
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  todos     Todo[]
+  todos        Todo[]
 }
 
 model Todo {
