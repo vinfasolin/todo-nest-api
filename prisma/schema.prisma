@@ -1,6 +1,6 @@
 generator client {
   provider = "prisma-client-js"
-  //prisma/schema.prisma
+  // prisma/schema.prisma
 }
 
 datasource db {
@@ -9,9 +9,9 @@ datasource db {
 }
 
 model PlayingWithNeon {
-  id    Int     @id @default(autoincrement())
+  id    Int    @id @default(autoincrement())
   name  String
-  value Float?  @db.Real
+  value Float? @db.Real
 
   @@map("playing_with_neon")
 }
@@ -26,20 +26,37 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  todos        Todo[]
+  // relações
+  todos          Todo[]
+  passwordResets PasswordReset[] // ✅ lado oposto da relação
 }
 
 model Todo {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   title       String
   description String?
-  done        Boolean  @default(false)
+  done        Boolean @default(false)
 
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+model PasswordReset {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }

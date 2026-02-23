@@ -4,12 +4,14 @@ import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
+// src/prisma/prisma.service.ts
 @Injectable()
 export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
   private static pool: Pool | null = null;
+  private static poolUsers = 0;
 
   constructor() {
     const url = process.env.DATABASE_URL?.trim();
@@ -26,6 +28,8 @@ export class PrismaService
       });
     }
 
+    PrismaService.poolUsers += 1;
+
     super({
       adapter: new PrismaPg(PrismaService.pool),
     });
@@ -34,10 +38,18 @@ export class PrismaService
   async onModuleInit() {
     await this.$connect();
   }
-  //src/prisma/prisma.service.ts
+
   async onModuleDestroy() {
+    // desconecta o prisma client
     await this.$disconnect();
-    await PrismaService.pool?.end().catch(() => undefined);
-    PrismaService.pool = null;
+
+    // em dev/hot-reload pode ter múltiplas instâncias. só encerra quando for a última.
+    PrismaService.poolUsers -= 1;
+
+    if (PrismaService.poolUsers <= 0) {
+      await PrismaService.pool?.end().catch(() => undefined);
+      PrismaService.pool = null;
+      PrismaService.poolUsers = 0;
+    }
   }
 }

@@ -10,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { GoogleIdTokenVerifier } from './google.strategy';
+import { PasswordResetService } from './password-reset.service';
 
 type GoogleLoginBody = { idToken: string };
 
@@ -30,6 +31,7 @@ export class AuthController {
     private readonly prisma: PrismaService,
     private readonly google: GoogleIdTokenVerifier,
     private readonly jwt: JwtService,
+    private readonly reset: PasswordResetService,
   ) {}
 
   private async sign(user: { id: string; email: string }) {
@@ -58,14 +60,12 @@ export class AuthController {
       select: { id: true, email: true, passwordHash: true },
     });
 
-    // se já tem senha cadastrada, não deixa registrar de novo
     if (existing?.passwordHash) {
       throw new BadRequestException('Email already registered');
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // se já existe por email (ex.: criado via Google), faz "upgrade" adicionando senha
     const user = await this.prisma.user.upsert({
       where: { email },
       update: {
@@ -142,7 +142,6 @@ export class AuthController {
     const email = String(payload.email).trim().toLowerCase();
     const googleSub = String(payload.sub).trim();
 
-    // 1) se já existe por googleSub: atualiza e segue
     const bySub = await this.prisma.user.findUnique({
       where: { googleSub },
       select: { id: true },
@@ -168,14 +167,12 @@ export class AuthController {
         },
       });
     } else {
-      // 2) se não existe por sub, tenta linkar por email
       const byEmail = await this.prisma.user.findUnique({
         where: { email },
         select: { id: true, googleSub: true },
       });
 
       if (byEmail && !byEmail.googleSub) {
-        // linka a conta local com Google
         user = await this.prisma.user.update({
           where: { email },
           data: {
@@ -198,7 +195,6 @@ export class AuthController {
           'Email already linked to another Google account',
         );
       } else {
-        // 3) cria novo user google
         user = await this.prisma.user.create({
           data: {
             googleSub,
@@ -221,5 +217,19 @@ export class AuthController {
 
     const token = await this.sign(user);
     return { ok: true, token, user };
+  }
+
+  // ✅ NOVO: POST /auth/forgot-password (público)
+  @Post('forgot-password')
+  async forgotPassword(@Body() body: { email?: any }) {
+    await this.reset.requestReset(body?.email);
+    return { ok: true };
+  }
+
+  // ✅ NOVO: POST /auth/reset-password (público)
+  @Post('reset-password')
+  async resetPassword(@Body() body: { email?: any; code?: any; newPassword?: any }) {
+    await this.reset.confirmReset(body?.email, body?.code, body?.newPassword);
+    return { ok: true };
   }
 }
