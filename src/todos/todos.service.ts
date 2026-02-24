@@ -4,7 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-//src/todos/todos.service.ts
+// src/todos/todos.service.ts
+
 type CreateTodoBody = {
   title?: string;
   description?: string;
@@ -40,6 +41,7 @@ export class TodosService {
     return d;
   }
 
+  // ✅ (mantido) lista antiga completa — pode ficar para compat, mas agora o controller usa listPaged()
   async list(userId: string) {
     return this.prisma.todo.findMany({
       where: { userId },
@@ -53,6 +55,44 @@ export class TodosService {
         updatedAt: true,
       },
     });
+  }
+
+  // ✅ NOVO: paginação cursor-based
+  // GET /todos?take=5
+  // GET /todos?take=5&cursor=<id>
+  async listPaged(
+    userId: string,
+    opts: { take: number; cursor?: string },
+  ): Promise<{ items: any[]; nextCursor: string | null }> {
+    const takeNum = Number(opts?.take);
+    const take = Number.isFinite(takeNum) ? Math.min(Math.max(takeNum, 1), 50) : 5;
+    const cursor = String(opts?.cursor || '').trim() || undefined;
+
+    const items = await this.prisma.todo.findMany({
+      where: { userId },
+      // ✅ ordem estável para paginação (recomendado)
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take,
+      ...(cursor
+        ? {
+            cursor: { id: cursor },
+            skip: 1, // ✅ não repetir o item do cursor
+          }
+        : {}),
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        done: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    const nextCursor =
+      items.length === take ? String(items[items.length - 1]?.id || '') || null : null;
+
+    return { items, nextCursor };
   }
 
   async create(userId: string, body: CreateTodoBody) {

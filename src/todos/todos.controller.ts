@@ -1,3 +1,4 @@
+// src/todos/todos.controller.ts
 import {
   Body,
   Controller,
@@ -6,13 +7,14 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard, AuthUser } from '../auth/jwt.guard';
 import { TodosService } from './todos.service';
-//src/todos/todos.controller.ts
+
 type CreateTodoBody = {
   title?: string;
   description?: string;
@@ -36,10 +38,22 @@ export class TodosController {
   }
 
   @Get()
-  async list(@Req() req: any) {
+  async list(
+    @Req() req: any,
+    @Query('take') takeRaw?: string,
+    @Query('cursor') cursorRaw?: string,
+  ) {
     const user = this.getUser(req);
-    const items = await this.service.list(user.uid);
-    return { ok: true, items };
+
+    const takeNum = parseInt(String(takeRaw || '5'), 10);
+    const take = Number.isFinite(takeNum) ? Math.min(Math.max(takeNum, 1), 50) : 5;
+
+    const cursor = String(cursorRaw || '').trim() || undefined;
+
+    // ✅ novo método no service (vamos criar no próximo passo)
+    const { items, nextCursor } = await this.service.listPaged(user.uid, { take, cursor });
+
+    return { ok: true, items, nextCursor };
   }
 
   @Post()
