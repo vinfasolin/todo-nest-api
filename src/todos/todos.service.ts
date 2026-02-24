@@ -1,10 +1,10 @@
+// src/todos/todos.service.ts
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-// src/todos/todos.service.ts
 
 type CreateTodoBody = {
   title?: string;
@@ -52,6 +52,26 @@ export class TodosService {
     return v;
   }
 
+  // cursor composto: "<createdAtISO>|<id>"
+  private encodeCursor(createdAt: Date | string, id: string) {
+    const iso = typeof createdAt === 'string' ? createdAt : createdAt.toISOString();
+    return `${iso}|${id}`;
+  }
+
+  private decodeCursor(raw?: string): { createdAt?: Date; id?: string } {
+    const s = String(raw ?? '').trim();
+    if (!s) return {};
+    if (s.includes('|')) {
+      const [iso, id] = s.split('|');
+      const dt = new Date(String(iso));
+      const tid = String(id ?? '').trim();
+      if (!tid || Number.isNaN(dt.getTime())) return {};
+      return { createdAt: dt, id: tid };
+    }
+    // compat antigo: só id (não recomendado, mas não quebra)
+    return { id: s };
+  }
+
   // ✅ (mantido) lista antiga completa
   async list(userId: string) {
     return this.prisma.todo.findMany({
@@ -94,8 +114,14 @@ export class TodosService {
     return where;
   }
 
-  // ✅ paginação cursor-based + busca/filtro server-side
-  // GET /todos?take=5&cursor=<id>&q=abc&filter=open|done|all
+  /**
+   * ✅ paginação cursor-based + busca/filtro server-side (cursor composto REAL)
+   * GET /todos?take=10&cursor=<createdAtISO>|<id>&q=abc&filter=open|done|all
+   *
+   * Requer no schema.prisma:
+   *  @@unique([userId, createdAt, id])
+   * (Prisma gera: userId_createdAt_id)
+   */
   async listPaged(
     userId: string,
     opts: {
@@ -109,9 +135,9 @@ export class TodosService {
     const takeNum = Number(opts?.take);
     const take = Number.isFinite(takeNum)
       ? Math.min(Math.max(takeNum, 1), 50)
-      : 5;
+      : 10;
 
-    const cursor = String(opts?.cursor || '').trim() || undefined;
+    const cursorRaw = String(opts?.cursor || '').trim() || undefined;
 
     const where = this.buildWhere(userId, {
       q: opts?.q,
@@ -119,15 +145,35 @@ export class TodosService {
       done: opts?.done,
     });
 
+    const decoded = this.decodeCursor(cursorRaw);
+
+    const orderBy = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
+
+    const useComposite =
+      decoded.createdAt instanceof Date &&
+      !Number.isNaN(decoded.createdAt.getTime()) &&
+      !!decoded.id;
+
     const items = await this.prisma.todo.findMany({
       where,
-      // ✅ ordem estável para paginação (cursor de id)
-      // Obs: para filtros + cursor, assumimos id PK e usamos cursor por id.
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy,
       take,
-      ...(cursor
+      ...(useComposite
         ? {
-            cursor: { id: cursor },
+            cursor: {
+              // ✅ cursor composto baseado no @@unique([userId, createdAt, id])
+              userId_createdAt_id: {
+                userId,
+                createdAt: decoded.createdAt!,
+                id: decoded.id!,
+              },
+            },
+            skip: 1,
+          }
+        : decoded.id
+        ? {
+            // compat antigo (cursor só por id) — não ideal, mas não quebra
+            cursor: { id: decoded.id },
             skip: 1,
           }
         : {}),
@@ -143,7 +189,10 @@ export class TodosService {
 
     const nextCursor =
       items.length === take
-        ? String(items[items.length - 1]?.id || '') || null
+        ? this.encodeCursor(
+            items[items.length - 1]?.createdAt,
+            String(items[items.length - 1]?.id),
+          )
         : null;
 
     return { items, nextCursor };
@@ -221,9 +270,24 @@ export class TodosService {
     return { ok: true };
   }
 
-  // ✅ NOVO: excluir todas as tarefas do usuário
+  // ✅ excluir todas as tarefas do usuário (sem filtro)
   async removeAll(userId: string) {
-    await this.prisma.todo.deleteMany({ where: { userId } });
-    return { ok: true };
+    const r = await this.prisma.todo.deleteMany({ where: { userId } });
+    return { ok: true, deleted: r.count };
+  }
+
+  // ✅ bulk delete com filtro/busca (para DELETE /todos/bulk)
+  async removeBulk(
+    userId: string,
+    opts?: { q?: string; filter?: Filter; done?: boolean },
+  ) {
+    const where = this.buildWhere(userId, {
+      q: opts?.q,
+      filter: (opts?.filter ?? 'all') as Filter,
+      done: opts?.done,
+    });
+
+    const r = await this.prisma.todo.deleteMany({ where });
+    return { ok: true, deleted: r.count };
   }
 }

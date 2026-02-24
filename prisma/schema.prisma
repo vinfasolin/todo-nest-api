@@ -1,6 +1,7 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
-  // prisma/schema.prisma
 }
 
 datasource db {
@@ -28,7 +29,7 @@ model User {
 
   // relações
   todos          Todo[]
-  passwordResets PasswordReset[] // ✅ lado oposto da relação
+  passwordResets PasswordReset[]
 }
 
 model Todo {
@@ -43,7 +44,13 @@ model Todo {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // índices
   @@index([userId])
+
+  // necessário para paginação estável com orderBy createdAt desc, id desc
+  // permite cursor composto: userId_createdAt_id
+  @@unique([userId, createdAt, id])
+  @@index([userId, createdAt, id])
 }
 
 model PasswordReset {
