@@ -26,8 +26,9 @@ export class TodosService {
   private normalizeTitle(title: unknown): string {
     const t = String(title ?? '').trim();
     if (!t) throw new BadRequestException('title is required');
-    if (t.length > 120)
+    if (t.length > 120) {
       throw new BadRequestException('title is too long (max 120)');
+    }
     return t;
   }
 
@@ -37,10 +38,18 @@ export class TodosService {
 
     const d = String(desc).trim();
     if (!d) return null;
-    if (d.length > 2000)
+
+    if (d.length > 2000) {
       throw new BadRequestException('description is too long (max 2000)');
+    }
 
     return d;
+  }
+
+  private normalizeId(id: unknown): string {
+    const v = String(id ?? '').trim();
+    if (!v) throw new BadRequestException('id is required');
+    return v;
   }
 
   // ✅ (mantido) lista antiga completa
@@ -59,7 +68,10 @@ export class TodosService {
     });
   }
 
-  private buildWhere(userId: string, opts?: { q?: string; filter?: Filter; done?: boolean }) {
+  private buildWhere(
+    userId: string,
+    opts?: { q?: string; filter?: Filter; done?: boolean },
+  ) {
     const where: any = { userId };
 
     // done explícito tem prioridade
@@ -86,10 +98,19 @@ export class TodosService {
   // GET /todos?take=5&cursor=<id>&q=abc&filter=open|done|all
   async listPaged(
     userId: string,
-    opts: { take: number; cursor?: string; q?: string; filter?: Filter; done?: boolean },
+    opts: {
+      take: number;
+      cursor?: string;
+      q?: string;
+      filter?: Filter;
+      done?: boolean;
+    },
   ): Promise<{ items: any[]; nextCursor: string | null }> {
     const takeNum = Number(opts?.take);
-    const take = Number.isFinite(takeNum) ? Math.min(Math.max(takeNum, 1), 50) : 5;
+    const take = Number.isFinite(takeNum)
+      ? Math.min(Math.max(takeNum, 1), 50)
+      : 5;
+
     const cursor = String(opts?.cursor || '').trim() || undefined;
 
     const where = this.buildWhere(userId, {
@@ -100,7 +121,8 @@ export class TodosService {
 
     const items = await this.prisma.todo.findMany({
       where,
-      // ✅ ordem estável para paginação
+      // ✅ ordem estável para paginação (cursor de id)
+      // Obs: para filtros + cursor, assumimos id PK e usamos cursor por id.
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take,
       ...(cursor
@@ -120,7 +142,9 @@ export class TodosService {
     });
 
     const nextCursor =
-      items.length === take ? String(items[items.length - 1]?.id || '') || null : null;
+      items.length === take
+        ? String(items[items.length - 1]?.id || '') || null
+        : null;
 
     return { items, nextCursor };
   }
@@ -143,21 +167,21 @@ export class TodosService {
   }
 
   async update(userId: string, id: string, body: UpdateTodoBody) {
-    const todoId = String(id || '').trim();
-    if (!todoId) throw new BadRequestException('id is required');
+    const todoId = this.normalizeId(id);
 
     const exists = await this.prisma.todo.findFirst({
       where: { id: todoId, userId },
       select: { id: true },
     });
-
     if (!exists) throw new NotFoundException('Todo not found');
 
     const data: Record<string, any> = {};
 
     if (body.title !== undefined) data.title = this.normalizeTitle(body.title);
-    if (body.description !== undefined)
+
+    if (body.description !== undefined) {
       data.description = this.normalizeDescription(body.description);
+    }
 
     if (body.done !== undefined) {
       if (typeof body.done !== 'boolean') {
@@ -185,17 +209,21 @@ export class TodosService {
   }
 
   async remove(userId: string, id: string) {
-    const todoId = String(id || '').trim();
-    if (!todoId) throw new BadRequestException('id is required');
+    const todoId = this.normalizeId(id);
 
     const exists = await this.prisma.todo.findFirst({
       where: { id: todoId, userId },
       select: { id: true },
     });
-
     if (!exists) throw new NotFoundException('Todo not found');
 
     await this.prisma.todo.delete({ where: { id: todoId } });
+    return { ok: true };
+  }
+
+  // ✅ NOVO: excluir todas as tarefas do usuário
+  async removeAll(userId: string) {
+    await this.prisma.todo.deleteMany({ where: { userId } });
     return { ok: true };
   }
 }

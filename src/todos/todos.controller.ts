@@ -101,6 +101,13 @@ export class TodosController {
     return { ok: true, todo };
   }
 
+  // ✅ EXCLUIR TODAS (novo endpoint)
+  @Delete()
+  async removeAll(@Req() req: any) {
+    const user = this.getUser(req);
+    return this.service.removeAll(user.uid);
+  }
+
   @Patch(':id')
   async update(
     @Req() req: any,
