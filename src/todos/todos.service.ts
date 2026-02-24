@@ -17,6 +17,8 @@ type UpdateTodoBody = {
   done?: boolean;
 };
 
+type Filter = 'all' | 'open' | 'done';
+
 @Injectable()
 export class TodosService {
   constructor(private readonly prisma: PrismaService) {}
@@ -41,7 +43,7 @@ export class TodosService {
     return d;
   }
 
-  // ✅ (mantido) lista antiga completa — pode ficar para compat, mas agora o controller usa listPaged()
+  // ✅ (mantido) lista antiga completa
   async list(userId: string) {
     return this.prisma.todo.findMany({
       where: { userId },
@@ -57,26 +59,54 @@ export class TodosService {
     });
   }
 
-  // ✅ NOVO: paginação cursor-based
-  // GET /todos?take=5
-  // GET /todos?take=5&cursor=<id>
+  private buildWhere(userId: string, opts?: { q?: string; filter?: Filter; done?: boolean }) {
+    const where: any = { userId };
+
+    // done explícito tem prioridade
+    if (opts?.done === true || opts?.done === false) {
+      where.done = opts.done;
+    } else {
+      const filter = (opts?.filter ?? 'all') as Filter;
+      if (filter === 'open') where.done = false;
+      if (filter === 'done') where.done = true;
+    }
+
+    const q = String(opts?.q ?? '').trim();
+    if (q) {
+      where.OR = [
+        { title: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    return where;
+  }
+
+  // ✅ paginação cursor-based + busca/filtro server-side
+  // GET /todos?take=5&cursor=<id>&q=abc&filter=open|done|all
   async listPaged(
     userId: string,
-    opts: { take: number; cursor?: string },
+    opts: { take: number; cursor?: string; q?: string; filter?: Filter; done?: boolean },
   ): Promise<{ items: any[]; nextCursor: string | null }> {
     const takeNum = Number(opts?.take);
     const take = Number.isFinite(takeNum) ? Math.min(Math.max(takeNum, 1), 50) : 5;
     const cursor = String(opts?.cursor || '').trim() || undefined;
 
+    const where = this.buildWhere(userId, {
+      q: opts?.q,
+      filter: (opts?.filter ?? 'all') as Filter,
+      done: opts?.done,
+    });
+
     const items = await this.prisma.todo.findMany({
-      where: { userId },
-      // ✅ ordem estável para paginação (recomendado)
+      where,
+      // ✅ ordem estável para paginação
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take,
       ...(cursor
         ? {
             cursor: { id: cursor },
-            skip: 1, // ✅ não repetir o item do cursor
+            skip: 1,
           }
         : {}),
       select: {

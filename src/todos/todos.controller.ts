@@ -26,6 +26,28 @@ type UpdateTodoBody = {
   done?: boolean;
 };
 
+type Filter = 'all' | 'open' | 'done';
+
+function parseTake(raw: any, fallback = 5) {
+  const n = parseInt(String(raw ?? fallback), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, 1), 50);
+}
+
+function parseFilter(raw: any): Filter {
+  const v = String(raw ?? 'all').trim().toLowerCase();
+  if (v === 'open' || v === 'done') return v;
+  return 'all';
+}
+
+function parseDone(raw: any): boolean | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const v = String(raw).trim().toLowerCase();
+  if (v === 'true' || v === '1' || v === 'yes') return true;
+  if (v === 'false' || v === '0' || v === 'no') return false;
+  return undefined; // se vier lixo, ignora
+}
+
 @Controller('todos')
 @UseGuards(JwtAuthGuard)
 export class TodosController {
@@ -37,21 +59,37 @@ export class TodosController {
     return u;
   }
 
+  // GET /todos?take=5&cursor=<id>&q=texto&filter=all|open|done
+  // (compat) também aceita done=true|false
   @Get()
   async list(
     @Req() req: any,
     @Query('take') takeRaw?: string,
     @Query('cursor') cursorRaw?: string,
+    @Query('q') qRaw?: string,
+    @Query('filter') filterRaw?: string,
+    @Query('done') doneRaw?: string,
   ) {
     const user = this.getUser(req);
 
-    const takeNum = parseInt(String(takeRaw || '5'), 10);
-    const take = Number.isFinite(takeNum) ? Math.min(Math.max(takeNum, 1), 50) : 5;
-
+    const take = parseTake(takeRaw, 5);
     const cursor = String(cursorRaw || '').trim() || undefined;
 
-    // ✅ novo método no service (vamos criar no próximo passo)
-    const { items, nextCursor } = await this.service.listPaged(user.uid, { take, cursor });
+    const q = String(qRaw || '').trim() || undefined;
+
+    // prioridade: se vier done explícito, usa ele
+    const doneParsed = parseDone(doneRaw);
+
+    // senão usa filter
+    const filter = parseFilter(filterRaw);
+
+    const { items, nextCursor } = await this.service.listPaged(user.uid, {
+      take,
+      cursor,
+      q,
+      filter,
+      done: doneParsed,
+    });
 
     return { ok: true, items, nextCursor };
   }
