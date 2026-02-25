@@ -60,11 +60,14 @@ export class TodosController {
   }
 
   /**
-   * GET /todos?take=10&cursor=<id>&q=texto&filter=all|open|done
+   * GET /todos?take=10&cursor=<cursor>&q=texto&filter=all|open|done
    * Aliases aceitos:
    *  - status=open|done (alias de filter)
    * Compat:
    *  - done=true|false tem prioridade sobre filter/status
+   *
+   * Retorna:
+   *  { ok:true, items:Todo[], nextCursor:string|null, total:number }
    */
   @Get()
   async list(
@@ -75,7 +78,7 @@ export class TodosController {
     @Query('q') qRaw?: string,
     @Query('search') searchRaw?: string, // alias
     @Query('filter') filterRaw?: string,
-    @Query('status') statusRaw?: string, // ✅ alias do app
+    @Query('status') statusRaw?: string, // alias do app
     @Query('done') doneRaw?: string,
   ) {
     const user = this.getUser(req);
@@ -92,7 +95,7 @@ export class TodosController {
     const effectiveFilterRaw = filterRaw ?? statusRaw;
     const filter = parseFilter(effectiveFilterRaw);
 
-    const { items, nextCursor } = await this.service.listPaged(user.uid, {
+    const { items, nextCursor, total } = await this.service.listPaged(user.uid, {
       take,
       cursor,
       q,
@@ -100,7 +103,7 @@ export class TodosController {
       done: doneParsed,
     });
 
-    return { ok: true, items, nextCursor };
+    return { ok: true, items, nextCursor, total };
   }
 
   @Post()
@@ -118,7 +121,7 @@ export class TodosController {
    * Compat:
    *  - done=true|false tem prioridade
    *
-   * Retorno sugerido: { ok:true, deleted:number }
+   * Retorno: { ok:true, deleted:number }
    */
   @Delete('bulk')
   async removeBulk(
@@ -137,7 +140,6 @@ export class TodosController {
     const effectiveFilterRaw = filterRaw ?? statusRaw;
     const filter = parseFilter(effectiveFilterRaw);
 
-    // ✅ precisa existir no service (vou ajustar quando você enviar todos.service.ts)
     return this.service.removeBulk(user.uid, {
       q,
       filter,
@@ -148,7 +150,6 @@ export class TodosController {
   /**
    * ✅ (opcional) EXCLUIR TUDO sem filtro
    * DELETE /todos
-   * Eu manteria, mas no app use /todos/bulk para respeitar filtro/busca.
    */
   @Delete()
   async removeAll(@Req() req: any) {

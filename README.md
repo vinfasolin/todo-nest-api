@@ -1,10 +1,10 @@
-# todo-nest-api — NestJS + Prisma v7 + Neon Postgres + Auth Google + Auth Local + Reset de Senha (Email)
+# todo-nest-api — NestJS 11 + Prisma v7 + Neon Postgres + Auth (Google + Local) + Reset de Senha
 
-API de To-Dos com autenticação via **Google ID Token** *e* via **email/senha**, autorização via **JWT próprio da API** (Bearer) e fluxo **“Esqueci minha senha”** com envio de e-mail (API externa PHP).  
+API de **To‑Dos** com autenticação via **Google ID Token** *e* via **email/senha**, autorização via **JWT próprio da API** (Bearer) e fluxo **“Esqueci minha senha”** com envio de e‑mail (API externa PHP).  
 Deploy em **Render** e banco em **Neon Postgres** com **Prisma v7**.
 
-- Produção: `https://todo-nest-api-p6b1.onrender.com`
-- Local: `http://localhost:3000`
+- **Produção:** `https://todo-nest-api-p6b1.onrender.com`
+- **Local:** `http://localhost:3000`
 
 ---
 
@@ -12,27 +12,27 @@ Deploy em **Render** e banco em **Neon Postgres** com **Prisma v7**.
 
 ### Autenticação (2 modos)
 
-#### 1) Google Login: `POST /auth/google`
-- recebe `{ idToken }` (Google ID Token)
+#### 1) Google Login — `POST /auth/google`
+- body: `{ idToken }` (Google ID Token)
 - valida com `google-auth-library`
-- **cria ou atualiza** usuário
-- **se existir usuário local com mesmo email**, a API **vincula** a conta (preenche `googleSub`)
-- retorna `token` (JWT da API, 7 dias) + `user`
+- cria/atualiza usuário
+- se existir usuário **local** com mesmo email, a API **vincula** a conta (preenche `googleSub`)
+- retorna `{ ok:true, token, user }`
 
-> Regras importantes (Google):
-> - Conta Google **não pode** alterar **email** nem **senha** via API.
-> - Pode alterar **name** e **picture**.
+**Regras (Google):**
+- conta Google **não pode** alterar **email** nem **senha** via API
+- pode alterar **name** e **picture**
 
-#### 2) Registro local: `POST /auth/register`
-- recebe `{ email, password, name? }`
-- cria usuário com `passwordHash` (bcrypt)
-- se já existir usuário com mesmo email criado via Google (sem senha), faz “upgrade” adicionando senha
-- retorna `token` + `user`
+#### 2) Registro local — `POST /auth/register`
+- body: `{ email, password, name? }`
+- cria usuário com `passwordHash` (`bcrypt`)
+- se já existir usuário do Google com mesmo email (sem senha), faz “upgrade” adicionando senha
+- retorna `{ ok:true, token, user }`
 
-#### 3) Login local: `POST /auth/login`
-- recebe `{ email, password }`
-- valida a senha (`bcrypt.compare`)
-- retorna `token` + `user` (sem vazar `passwordHash`)
+#### 3) Login local — `POST /auth/login`
+- body: `{ email, password }`
+- valida senha (`bcrypt.compare`)
+- retorna `{ ok:true, token, user }`
 
 ---
 
@@ -40,28 +40,39 @@ Deploy em **Render** e banco em **Neon Postgres** com **Prisma v7**.
 
 Fluxo em 2 etapas (sem JWT):
 
-#### 1) Solicitar código: `POST /auth/forgot-password`
+#### 1) Solicitar código — `POST /auth/forgot-password`
 - body: `{ email }`
-- sempre retorna `{ ok: true }` (anti-enumeração)
+- sempre retorna `{ ok:true }` (anti-enumeração)
 - **somente contas locais** recebem código (conta Google não recebe)
 
-#### 2) Confirmar e definir nova senha: `POST /auth/reset-password`
+#### 2) Confirmar e definir nova senha — `POST /auth/reset-password`
 - body: `{ email, code, newPassword }`
 - código expira em **15 minutos**
 - altera `passwordHash` e marca o código como usado
 
-> Envio de e-mail é feito via API externa (PHP) configurada em variáveis de ambiente.
+> Envio de e‑mail é feito via API externa (PHP) configurada em env vars.
 
 ---
 
 ## Recursos protegidos (Bearer JWT)
 
+Header:
+```http
+Authorization: Bearer <JWT_DA_API>
+```
+
 - **Perfil**: `GET /me`
 - **Editar perfil**: `PATCH /me` (name/picture)
-- **Alterar email**: `PATCH /me/email` (**somente conta local**)
+- **Alterar email**: `PATCH /me/email` (**somente conta local**; retorna token novo)
 - **Alterar senha**: `PATCH /me/password` (**somente conta local**)
 - **Excluir conta**: `DELETE /me` (conta local exige password)
-- **To-Dos por usuário**: `GET/POST/PATCH/DELETE /todos`
+- **To‑Dos por usuário**:
+  - `GET /todos` (paginado + busca/filtro server-side ✅)
+  - `POST /todos`
+  - `PATCH /todos/:id`
+  - `DELETE /todos/:id`
+  - `DELETE /todos/bulk` (**excluir em massa por filtro/busca ✅**)
+  - `DELETE /todos` (**excluir tudo ✅**)
 
 ---
 
@@ -80,7 +91,7 @@ Fluxo em 2 etapas (sem JWT):
 - `@nestjs/jwt`
 - `bcrypt`
 - Render (deploy)
-- Integração e-mail: API PHP externa (PHPMailer)
+- Integração e‑mail: API PHP externa (PHPMailer)
 
 ---
 
@@ -90,8 +101,6 @@ Fluxo em 2 etapas (sem JWT):
 src/
   main.ts
   app.module.ts
-  app.controller.ts
-  app.service.ts
 
   prisma/
     prisma.module.ts
@@ -148,24 +157,30 @@ EMAIL_FROM_NAME="ToDo Premium"
 EMAIL_API_KEY=""
 ```
 
-> `DATABASE_URL` é obrigatória: a API falha no boot sem ela.  
-> Se `EMAIL_API_BASE_URL` faltar, o fluxo de “Esqueci minha senha” falha ao enviar e-mail.
-
 ---
 
 ## Banco de dados (Prisma schema)
 
 ### User
-- `googleSub` é **opcional** (`String?`)
-- `passwordHash` é **opcional** (`String?`)
+- `googleSub` opcional (`String?`)
+- `passwordHash` opcional (`String?`)
 
-Isso permite:
+Permite:
 - conta **Google-only** (`googleSub != null`, `passwordHash == null`)
 - conta **Local-only** (`googleSub == null`, `passwordHash != null`)
 - conta **vinculada** (`googleSub != null`, `passwordHash != null`)
 
+### Todo (cursor composto recomendado)
+Para paginação estável com cursor composto, adicione no model `Todo`:
+
+```prisma
+@@unique([userId, createdAt, id])
+```
+
+Isso gera a chave única `userId_createdAt_id`, usada pelo `TodosService` para cursor composto.
+
 ### PasswordReset
-Tabela para códigos temporários do reset:
+Tabela de códigos do reset:
 - `codeHash` (sha256 do código)
 - `expiresAt` (15 min)
 - `usedAt` (marca usado)
@@ -181,35 +196,44 @@ npx prisma generate
 npm run start:dev
 ```
 
-Se for criar/atualizar schema local (recomendado):
+Criar/atualizar schema local:
 
 ```bash
 npx prisma migrate dev
 npx prisma generate
 ```
 
-> No Windows PowerShell, não use `&&` (use comandos em linhas separadas ou `;`).
+> No Windows PowerShell, evite `&&` — use uma linha por comando.
 
 ---
 
-## Scripts (referência)
-- `npm run build` → `prisma generate && nest build`
-- `npm run start` / `start:prod` → `node dist/src/main.js`
-- `npm run start:dev` → `nest start --watch`
-- `npx prisma migrate deploy` → migrations em produção
-- `npm test` / `npm run test:e2e`
+## Deploy no Render (migrations)
+
+**Build Command (recomendado):**
+```bash
+npm install && npm run build && npx prisma migrate deploy
+```
+
+**Start Command:**
+```bash
+npm run start:prod
+```
+
+Env vars no Render (mínimo):
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `GOOGLE_CLIENT_ID`
+- `CORS_ORIGINS`
+- `EMAIL_API_BASE_URL`
+- `EMAIL_FROM_NAME`
+- `EMAIL_API_KEY` (opcional)
+- `PORT` (Render geralmente injeta)
 
 ---
 
 ## Endpoints
 
 Base: local `http://localhost:3000` | prod `https://todo-nest-api-p6b1.onrender.com`
-
-### Health
-- `GET /` → `"OK"`
-- `GET /db` → `{ ok: true, rows: [...] }`
-
----
 
 ### Auth
 
@@ -218,137 +242,35 @@ Body:
 ```json
 { "email": "teste@teste.com", "password": "123456", "name": "Opcional" }
 ```
-Resposta:
-```json
-{ "ok": true, "token": "JWT_DA_API", "user": { "id":"...", "email":"...", "googleSub": null } }
-```
 
 #### POST `/auth/login`
 Body:
 ```json
 { "email": "teste@teste.com", "password": "123456" }
 ```
-Resposta:
-```json
-{ "ok": true, "token": "JWT_DA_API", "user": { "id":"...", "email":"...", "googleSub": null } }
-```
-
-> Se o usuário foi criado via Google e não definiu senha local, a API retorna erro (ex.: “This account has no local password”).
 
 #### POST `/auth/google`
 Body:
 ```json
 { "idToken": "GOOGLE_ID_TOKEN_AQUI" }
 ```
-Resposta:
-```json
-{ "ok": true, "token": "JWT_DA_API", "user": { "id":"...", "googleSub":"...", "email":"..." } }
-```
-
-**Regras de vínculo (importante):**
-- Se já existe usuário com `googleSub`, atualiza dados (email, name, picture).
-- Se não existe por `googleSub`, mas existe por **email** e `googleSub` é `null` → **vincula** (preenche `googleSub`).
-- Se existe por email mas já tem outro `googleSub` → erro de conflito (raro).
 
 ---
 
-### Reset de Senha (público)
+## To‑Dos (Bearer)
 
-#### POST `/auth/forgot-password`
-Body:
-```json
-{ "email": "teste@teste.com" }
-```
-Resposta (sempre):
-```json
-{ "ok": true }
-```
-
-#### POST `/auth/reset-password`
-Body:
-```json
-{ "email": "teste@teste.com", "code": "123456", "newPassword": "novaSenha" }
-```
-Resposta:
-```json
-{ "ok": true }
-```
-
-> Contas Google não recebem código (retorna `{ok:true}` para não revelar).
-
----
-
-### User (Bearer)
-
-Header:
-```http
-Authorization: Bearer <JWT_DA_API>
-```
-
-#### GET `/me`
-Resposta:
-```json
-{ "ok": true, "user": { "id":"...", "email":"...", "googleSub":"...", "name":"...", "picture":"..." } }
-```
-
-#### PATCH `/me` (name/picture)
-Body:
-```json
-{ "name": "Novo Nome", "picture": "https://..." }
-```
-Resposta:
-```json
-{ "ok": true, "user": { ... } }
-```
-
-#### PATCH `/me/password` (somente local)
-Body:
-```json
-{ "currentPassword": "senhaAtual", "newPassword": "novaSenha" }
-```
-Resposta:
-```json
-{ "ok": true }
-```
-
-#### PATCH `/me/email` (somente local — retorna token novo)
-Body:
-```json
-{ "newEmail": "novo@email.com", "password": "senhaAtual" }
-```
-Resposta:
-```json
-{ "ok": true, "token": "JWT_NOVO", "user": { ... } }
-```
-
-#### DELETE `/me`
-- Local: exige `{ password }`
-- Google: não exige password (opcional)
-
-Body (local):
-```json
-{ "password": "senhaAtual" }
-```
-Resposta:
-```json
-{ "ok": true }
-```
-
----
-
-### To-Dos (Bearer)
-
-Header:
-```http
-Authorization: Bearer <JWT_DA_API>
-```
-
-#### GET `/todos` (paginado ✅)
-Agora o endpoint suporta paginação **cursor-based** para facilitar *lazy loading* no app.
+### GET `/todos` — paginado + busca/filtro server-side ✅
 
 Query params:
-- `take` (opcional): quantidade de itens por página (padrão **5**, mínimo **1**, máximo **50**)
-- `cursor` (opcional): `id` do último item retornado na página anterior
+- `take` (opcional): itens por página (**padrão 10**, min 1, max 50)
+- `limit` (alias de `take`)
+- `cursor` (opcional): **cursor composto** `createdAtISO|id` (recomendado)
+  - compat: `cursor=<id>` (antigo; funciona, mas não é o ideal)
+- `q` (opcional): termo de busca (title/description, case-insensitive)
+- `search` (alias de `q`)
+- `filter` (opcional): `all` | `open` | `done`
+- `status` (alias de `filter`)
+- `done` (compat): `true|false|1|0|yes|no` (se informado, tem prioridade sobre filter/status)
 
 Resposta:
 ```json
@@ -357,45 +279,67 @@ Resposta:
   "items": [
     { "id":"...", "title":"...", "description":null, "done":false, "createdAt":"...", "updatedAt":"..." }
   ],
-  "nextCursor": "id_do_ultimo_item"
+  "nextCursor": "2026-02-24T12:34:56.789Z|ckxyz..."
 }
 ```
 
-- `nextCursor` vem `null` quando não há mais itens.
-- Ordenação do backend (para paginação estável): **`createdAt desc` + `id desc`**.
+**Ordenação (estável):** `createdAt desc` + `id desc`
 
 Exemplos:
 - Primeira página:
 ```http
-GET /todos?take=5
+GET /todos?take=10
 ```
 
 - Próxima página:
 ```http
-GET /todos?take=5&cursor=<nextCursor>
+GET /todos?take=10&cursor=<nextCursor>
 ```
 
-#### POST `/todos`
+- Buscar no servidor:
+```http
+GET /todos?take=10&q=mercado
+```
+
+- Filtrar pendentes:
+```http
+GET /todos?filter=open
+```
+
+- Concluídas + busca:
+```http
+GET /todos?filter=done&q=relatorio
+```
+
+---
+
+### POST `/todos`
 Body:
 ```json
 { "title": "Minha tarefa", "description": "opcional" }
 ```
+
 Resposta:
 ```json
-{ "ok": true, "todo": { "id":"...", "title":"...", "description":null, "done":false } }
+{ "ok": true, "todo": { "id":"...", "title":"...", "description":null, "done":false, "createdAt":"...", "updatedAt":"..." } }
 ```
 
-#### PATCH `/todos/:id`
+---
+
+### PATCH `/todos/:id`
 Body:
 ```json
 { "title": "Novo título", "description": null, "done": true }
 ```
+
 Resposta:
 ```json
-{ "ok": true, "todo": { "id":"...", "title":"...", "done":true } }
+{ "ok": true, "todo": { "id":"...", "title":"...", "done":true, "createdAt":"...", "updatedAt":"..." } }
 ```
 
-#### DELETE `/todos/:id`
+---
+
+### DELETE `/todos/:id`
 Resposta:
 ```json
 { "ok": true }
@@ -403,59 +347,66 @@ Resposta:
 
 ---
 
-## Testes (atenção)
+### DELETE `/todos/bulk` — excluir em massa por filtro/busca ✅
 
-Seus testes (unit/e2e) ainda esperam `"Hello World!"` no `GET /`, mas a API real retorna `"OK"`.
-Atualize:
-- `src/app.controller.spec.ts`
-- `test/app.e2e-spec.ts`
+Query params (mesmos aliases do GET):
+- `filter` / `status`
+- `q` / `search`
+- `done` (tem prioridade)
+
+Exemplos:
+- Excluir todas as concluídas:
+```http
+DELETE /todos/bulk?filter=done
+```
+
+- Excluir por busca:
+```http
+DELETE /todos/bulk?q=teste
+```
+
+- Excluir pendentes por busca:
+```http
+DELETE /todos/bulk?status=open&q=mercado
+```
+
+Resposta:
+```json
+{ "ok": true, "deleted": 42 }
+```
 
 ---
 
-## Deploy no Render (checklist atualizado)
+### DELETE `/todos` — excluir TUDO ✅
 
-1) Serviço Node no Render (via Git)
-
-2) **Build Command (recomendado)**:
-```bash
-npm install && npm run build && npx prisma migrate deploy
+Exemplo:
+```http
+DELETE /todos
 ```
 
-3) **Start Command**:
-```bash
-npm run start:prod
+Resposta:
+```json
+{ "ok": true, "deleted": 123 }
 ```
 
-4) Env vars no Render:
-- `DATABASE_URL`
-- `JWT_SECRET`
-- `GOOGLE_CLIENT_ID`
-- `CORS_ORIGINS`
-- `PORT` (Render geralmente injeta)
-- `EMAIL_API_BASE_URL`
-- `EMAIL_FROM_NAME`
-- `EMAIL_API_KEY` (opcional)
-- (opcional/recomendado) `DATABASE_URL_UNPOOLED` para migrations diretas, se você usar `directUrl`
+---
+
+## Testes (atenção)
+
+Se seus testes esperarem `"Hello World!"` no `GET /`, atualize para `"OK"` em:
+- `src/app.controller.spec.ts`
+- `test/app.e2e-spec.ts`
 
 ---
 
 ## Troubleshooting
 
 - **CORS**: configure `CORS_ORIGINS` com domínios exatos; o `main.ts` responde `OPTIONS 204`.
-- **401 Missing Bearer token**: faltou header `Authorization`.
-- **401 Invalid or expired Google ID token**: token expirou ou `GOOGLE_CLIENT_ID` não bate com `aud`.
-- **500 ao registrar/logar/resetar senha**: migration do Prisma não foi aplicada no Neon (rode `prisma migrate deploy` no Render).
-- **`EMAIL_API_BASE_URL is missing`**: faltou configurar a env do e-mail no Render.
-- **DATABASE_URL is missing**: faltou env.
-
----
-
-## Próximos passos recomendados
-- Swagger `/docs` (`@nestjs/swagger`)
-- DTOs + `class-validator`
-- Endpoint `/health` dedicado
-- Rate limit em `/auth/forgot-password` (recomendado)
-- Limpeza periódica de `PasswordReset` expirados (cron/job)
+- **401 Missing Bearer token**: faltou `Authorization: Bearer ...`.
+- **401 sessão expirada**: JWT expirou ou inválido.
+- **500 em produção**: migration não aplicada no Neon → use `npx prisma migrate deploy` no Render.
+- **EMAIL_API_BASE_URL ausente**: reset de senha falha ao enviar e‑mail.
+- **DATABASE_URL ausente**: API falha no boot.
 
 ---
 

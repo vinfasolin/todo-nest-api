@@ -54,7 +54,8 @@ export class TodosService {
 
   // cursor composto: "<createdAtISO>|<id>"
   private encodeCursor(createdAt: Date | string, id: string) {
-    const iso = typeof createdAt === 'string' ? createdAt : createdAt.toISOString();
+    const iso =
+      typeof createdAt === 'string' ? createdAt : createdAt.toISOString();
     return `${iso}|${id}`;
   }
 
@@ -115,6 +116,23 @@ export class TodosService {
   }
 
   /**
+   * ✅ total (count) com o MESMO filtro/busca do listPaged/removeBulk
+   * Útil para a tela exibir "Total no servidor: X".
+   */
+  async count(
+    userId: string,
+    opts?: { q?: string; filter?: Filter; done?: boolean },
+  ): Promise<number> {
+    const where = this.buildWhere(userId, {
+      q: opts?.q,
+      filter: (opts?.filter ?? 'all') as Filter,
+      done: opts?.done,
+    });
+
+    return this.prisma.todo.count({ where });
+  }
+
+  /**
    * ✅ paginação cursor-based + busca/filtro server-side (cursor composto REAL)
    * GET /todos?take=10&cursor=<createdAtISO>|<id>&q=abc&filter=open|done|all
    *
@@ -131,7 +149,7 @@ export class TodosService {
       filter?: Filter;
       done?: boolean;
     },
-  ): Promise<{ items: any[]; nextCursor: string | null }> {
+  ): Promise<{ items: any[]; nextCursor: string | null; total: number }> {
     const takeNum = Number(opts?.take);
     const take = Number.isFinite(takeNum)
       ? Math.min(Math.max(takeNum, 1), 50)
@@ -154,38 +172,42 @@ export class TodosService {
       !Number.isNaN(decoded.createdAt.getTime()) &&
       !!decoded.id;
 
-    const items = await this.prisma.todo.findMany({
-      where,
-      orderBy,
-      take,
-      ...(useComposite
-        ? {
-            cursor: {
-              // ✅ cursor composto baseado no @@unique([userId, createdAt, id])
-              userId_createdAt_id: {
-                userId,
-                createdAt: decoded.createdAt!,
-                id: decoded.id!,
+    // ✅ pega total em paralelo (mesmo WHERE)
+    const [items, total] = await Promise.all([
+      this.prisma.todo.findMany({
+        where,
+        orderBy,
+        take,
+        ...(useComposite
+          ? {
+              cursor: {
+                // ✅ cursor composto baseado no @@unique([userId, createdAt, id])
+                userId_createdAt_id: {
+                  userId,
+                  createdAt: decoded.createdAt!,
+                  id: decoded.id!,
+                },
               },
-            },
-            skip: 1,
-          }
-        : decoded.id
-        ? {
-            // compat antigo (cursor só por id) — não ideal, mas não quebra
-            cursor: { id: decoded.id },
-            skip: 1,
-          }
-        : {}),
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        done: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+              skip: 1,
+            }
+          : decoded.id
+          ? {
+              // compat antigo (cursor só por id) — não ideal, mas não quebra
+              cursor: { id: decoded.id },
+              skip: 1,
+            }
+          : {}),
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          done: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.todo.count({ where }),
+    ]);
 
     const nextCursor =
       items.length === take
@@ -195,7 +217,7 @@ export class TodosService {
           )
         : null;
 
-    return { items, nextCursor };
+    return { items, nextCursor, total };
   }
 
   async create(userId: string, body: CreateTodoBody) {

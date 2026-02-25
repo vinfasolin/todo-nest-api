@@ -1,8 +1,7 @@
 # docs/ARCHITECTURE.md — todo-nest-api
-
 Arquitetura interna: módulos, fluxo de auth (Google + Email/Senha + Reset de Senha), CORS, persistência e pontos de atenção.
 
-> Atualizado para incluir paginação cursor-based no `GET /todos` (lazy loading no app).
+> Atualizado para incluir **paginação cursor-based com cursor composto**, **busca/filtros server-side** no `GET /todos` (lazy loading + search no app) e **bulk delete** via `DELETE /todos/bulk` (além de `DELETE /todos` para excluir tudo).
 
 ---
 
@@ -29,7 +28,12 @@ Arquitetura interna: módulos, fluxo de auth (Google + Email/Senha + Reset de Se
   - `PATCH /me/password` (somente conta local)
   - `DELETE /me` (excluir conta; conta local exige password)
 - **TodosModule** (protegido por `JwtAuthGuard`):
-  - `GET/POST/PATCH/DELETE /todos`
+  - `GET /todos` (paginado + busca/filtros server-side; suporta aliases `status`, `search`, `limit`)
+  - `POST /todos`
+  - `PATCH /todos/:id`
+  - `DELETE /todos/:id`
+  - `DELETE /todos/bulk` (bulk delete por filtro/busca)
+  - `DELETE /todos` (excluir tudo sem filtro)
 
 ---
 
@@ -57,8 +61,8 @@ Payload emitido:
 { "uid": "<user.id>", "sub": "<user.id>", "email": "<user.email>" }
 ```
 
-> Observação: como o JWT inclui `email`, quando o usuário altera o e-mail via API
-> (`PATCH /me/email`), o backend devolve um **token novo**.
+> Como o JWT inclui `email`, quando o usuário altera o e-mail via API (`PATCH /me/email`),
+> o backend devolve um **token novo**.
 
 ---
 
@@ -66,13 +70,13 @@ Payload emitido:
 
 1) Controller valida `idToken`  
 2) `GoogleIdTokenVerifier.verify()` valida com `google-auth-library`:
-   - audiences = `[process.env.GOOGLE_CLIENT_ID, FALLBACK_CLIENT_ID]` (sem duplicatas)
-3) Extrai `sub` e `email` do payload do Google e normaliza o email (`trim().toLowerCase()`)  
+   - `aud` precisa bater com `process.env.GOOGLE_CLIENT_ID` (e/ou fallback, se existir)  
+3) Extrai `sub` e `email` e normaliza o email (`trim().toLowerCase()`)  
 4) Resolução de usuário (regra de vínculo):
-   - **Caso A:** existe usuário por `googleSub` → atualiza `email`, `name`, `picture`
-   - **Caso B:** não existe por `googleSub`, mas existe por `email` e `googleSub` é `null` → **vincula** preenchendo `googleSub` (a conta local vira também Google)
-   - **Caso C:** existe por `email`, mas já tem `googleSub` diferente → conflito (retorna erro)
-   - **Caso D:** não existe por `googleSub` nem por `email` → cria novo usuário com `googleSub`
+   - **A:** existe usuário por `googleSub` → atualiza `email`, `name`, `picture`
+   - **B:** não existe por `googleSub`, mas existe por `email` e `googleSub` é `null` → **vincula** preenchendo `googleSub`
+   - **C:** existe por `email`, mas já tem `googleSub` diferente → conflito (erro)
+   - **D:** não existe por `googleSub` nem por `email` → cria novo usuário com `googleSub`
 5) Emite JWT da API (7d) e retorna `{ ok:true, token, user }`
 
 ### Restrições (Google)
@@ -91,12 +95,12 @@ Payload emitido:
 2) Busca usuário por `email`  
 3) Regras:
    - Se existe e **já possui** `passwordHash` → rejeita (email já cadastrado)
-   - Se existe e **não possui** `passwordHash` (ex.: conta Google-only) → faz “upgrade” adicionando `passwordHash`
+   - Se existe e **não possui** `passwordHash` (conta Google-only) → “upgrade” adicionando `passwordHash`
    - Se não existe → cria novo usuário com `email`, `name?` e `passwordHash`
 4) `passwordHash` é gerado com `bcrypt`  
 5) Emite JWT da API e retorna `{ ok:true, token, user }`
 
-> Importante: a API **nunca** retorna `passwordHash` para o cliente.
+> Importante: a API **nunca** retorna `passwordHash`.
 
 ---
 
@@ -165,7 +169,6 @@ Env vars:
 ```ts
 { uid: payload.uid || payload.sub, sub: payload.sub, email: payload.email }
 ```
-
 Esse `uid` é usado como `userId` em `/todos` e para buscar o perfil em `/me`.
 
 ---
@@ -181,8 +184,8 @@ Esse `uid` é usado como `userId` em `/todos` e para buscar o perfil em `/me`.
   - `onModuleInit` → `$connect`
   - `onModuleDestroy` → `$disconnect` + `pool.end`
 
-> Nota: em ambiente dev/hot-reload pode haver múltiplas instâncias; é comum
-> usar um controle (contador) para só encerrar o pool quando for a última.
+> Em dev/hot-reload pode haver múltiplas instâncias; é comum manter um controle para
+> só encerrar o pool quando for a última instância.
 
 ---
 
@@ -194,56 +197,140 @@ Esse `uid` é usado como `userId` em `/todos` e para buscar o perfil em `/me`.
 - `googleSub` unique **opcional** (`String?`)
 - `passwordHash` **opcional** (`String?`) para login local
 - `name`, `picture` opcionais
-- relação 1:N com Todo
-- relação 1:N com PasswordReset
+- relação 1:N com `Todo`
+- relação 1:N com `PasswordReset`
 
-Essa modelagem permite:
+Permite:
 - **Local-only**: `passwordHash != null`, `googleSub == null`
 - **Google-only**: `googleSub != null`, `passwordHash == null`
 - **Vinculada**: `googleSub != null`, `passwordHash != null`
 
 ### PasswordReset
-- `id` cuid PK
-- `userId` FK → User (onDelete Cascade)
-- `codeHash` sha256 do código
-- `expiresAt` (timestamp)
-- `usedAt` (nullable)
+- `codeHash` (sha256), `expiresAt`, `usedAt?`, FK para `User` com `onDelete: Cascade`
 - índices em `[userId]` e `[expiresAt]`
 
 ### Todo
-- `id` cuid PK
-- `title` obrigatório
-- `description` opcional
-- `done` default false
-- `userId` FK → User (onDelete Cascade)
-- index `[userId]`
+- `id` cuid PK, `title`, `description?`, `done` default false, FK `userId` com `onDelete: Cascade`
+- índice em `[userId]`
+
+#### ✅ Cursor composto (recomendado para paginação estável)
+Como o backend ordena por **`createdAt desc` + `id desc`**, o cursor ideal é composto:
+```
+<createdAtISO>|<id>
+```
+Para permitir `cursor` composto no Prisma com segurança, adicione no `Todo`:
+
+```prisma
+model Todo {
+  // ...
+  @@unique([userId, createdAt, id]) // gera userId_createdAt_id
+}
+```
 
 ---
 
-## To-Dos: paginação + validações + ownership
+## To-Dos: paginação + busca/filtros + validações + ownership
 
-### Paginação (GET `/todos`)
-O endpoint suporta paginação **cursor-based** para habilitar *lazy loading* no app.
+### GET `/todos` — paginação cursor-based + busca/filtro server-side
 
-- Query params:
-  - `take` (opcional): itens por página (padrão **5**, min **1**, max **50**)
-  - `cursor` (opcional): `id` do último item retornado na página anterior
-- Resposta:
-  - `items`: lista da página
-  - `nextCursor`: `id` do último item (ou `null` quando acabou)
+Objetivo:
+- lazy loading (carregar aos poucos)
+- busca/filtro no servidor (acha itens ainda não carregados no app)
 
-Ordenação do backend (estável):
+**Query params (principais):**
+- `take` (opcional): itens por página (padrão **10**, min **1**, max **50**)
+- `cursor` (opcional): cursor da página anterior
+  - recomendado: `<createdAtISO>|<id>`
+  - compat antigo: `<id>`
+- `q` (opcional): termo de busca (title/description, case-insensitive)
+- `filter` (opcional): `all | open | done`
+- `done` (opcional, compat): `true|false|1|0|yes|no` (**tem prioridade**)
+
+**Aliases aceitos (para compat com app):**
+- `limit` → alias de `take`
+- `search` → alias de `q`
+- `status` → alias de `filter`
+
+**Resposta:**
+```json
+{ "ok": true, "items": [ ... ], "nextCursor": "<cursorOuNull>" }
+```
+
+**Ordenação estável:**
 - `createdAt desc`
 - `id desc`
 
-Exemplos:
+**Exemplos:**
 ```http
-GET /todos?take=5
-GET /todos?take=5&cursor=<nextCursor>
+# primeira página
+GET /todos?take=10
+
+# próxima página (cursor composto)
+GET /todos?take=10&cursor=2026-02-24T12:00:00.000Z|ckxyz...
+
+# buscar (server-side)
+GET /todos?take=10&q=mercado
+
+# filtrar pendentes
+GET /todos?take=10&filter=open
+
+# filtrar concluídas + buscar
+GET /todos?take=10&filter=done&q=relatorio
+
+# aliases (compat app)
+GET /todos?limit=10&status=open&search=mercado
 ```
 
-### Validações e ownership
-No service:
+> Importante: `cursor` só faz sentido dentro do **mesmo conjunto de filtros**.
+> Ao mudar `q/filter/done`, recomece sem cursor (pagina 1).
+
+---
+
+### DELETE `/todos/bulk` — bulk delete por filtro/busca (recomendado)
+
+Apaga em massa respeitando o mesmo “conjunto de filtros” do GET.
+
+**Query params (os mesmos do GET):**
+- `q` / `search` (alias)
+- `filter` / `status` (alias)
+- `done` (prioridade sobre filter)
+
+**Exemplos:**
+```http
+# excluir tudo que estiver concluído
+DELETE /todos/bulk?filter=done
+
+# excluir por busca
+DELETE /todos/bulk?q=teste
+
+# aliases (compat app)
+DELETE /todos/bulk?status=open&search=mercado
+```
+
+**Resposta:**
+```json
+{ "ok": true, "deleted": 42 }
+```
+
+---
+
+### DELETE `/todos` — excluir tudo (sem filtro)
+
+Apaga **todas** as tarefas do usuário autenticado (ignorando filtros).
+
+**Exemplo:**
+```http
+DELETE /todos
+```
+
+Resposta:
+```json
+{ "ok": true, "deleted": 123 }
+```
+
+---
+
+### Validações e ownership (service)
 - `title` obrigatório e max 120
 - `description` max 2000 (vazio → null)
 - `done` precisa ser boolean
@@ -258,12 +345,10 @@ No service:
 
 Recomendação: aplicar migrations automaticamente no deploy.
 
-- **Build Command (Render)**:
+**Build Command (Render):**
 ```bash
 npm install && npm run build && npx prisma migrate deploy
 ```
-
-Isso garante que mudanças no schema (ex.: `passwordHash`, `googleSub?`, `PasswordReset`) sejam aplicadas no Neon antes do start da API.
 
 Env vars importantes no Render:
 - `DATABASE_URL`
@@ -278,11 +363,9 @@ Env vars importantes no Render:
 
 ## Ponto de atenção: duplicação no módulo Todos (resolvido ✅)
 
-Antes você tinha:
-- arquivos separados (`todos.controller.ts` + `todos.service.ts`)
-- e uma versão “all-in-one” dentro de `todos.module.ts` (service+controller internos)
-
-✅ Agora o padrão recomendado é **somente** a versão separada (controller/service/module).
+✅ Padrão recomendado:
+- `todos.module.ts` apenas monta imports/controllers/providers
+- `todos.controller.ts` e `todos.service.ts` separados
 
 ---
 
@@ -292,7 +375,9 @@ Há desalinhamento:
 - API: `GET /` retorna `"OK"`
 - testes: esperavam `"Hello World!"`
 
-Ajuste `src/app.controller.spec.ts` e `test/app.e2e-spec.ts`.
+Ajuste:
+- `src/app.controller.spec.ts`
+- `test/app.e2e-spec.ts`
 
 ---
 
@@ -302,7 +387,6 @@ Ajuste `src/app.controller.spec.ts` e `test/app.e2e-spec.ts`.
 - DTO + `class-validator`
 - `ConfigModule` para validar env
 - `/health` dedicado + métricas
-- padronizar estrutura
 - rate limit em rotas de auth públicas
 - limpeza automática de `PasswordReset` expirados (cron/job)
-- endpoint “set password” para contas Google (opcional, UX)
+- opcional: “definir senha local” para contas Google (UX)
