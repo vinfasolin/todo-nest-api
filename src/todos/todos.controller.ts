@@ -45,7 +45,7 @@ function parseDone(raw: any): boolean | undefined {
   const v = String(raw).trim().toLowerCase();
   if (v === 'true' || v === '1' || v === 'yes') return true;
   if (v === 'false' || v === '0' || v === 'no') return false;
-  return undefined; // se vier lixo, ignora
+  return undefined;
 }
 
 @Controller('todos')
@@ -63,47 +63,62 @@ export class TodosController {
    * GET /todos?take=10&cursor=<cursor>&q=texto&filter=all|open|done
    * Aliases aceitos:
    *  - status=open|done (alias de filter)
+   *  - limit (alias de take)
+   *  - search (alias de q)
    * Compat:
    *  - done=true|false tem prioridade sobre filter/status
    *
    * Retorna:
-   *  { ok:true, items:Todo[], nextCursor:string|null, total:number }
+   *  { ok:true, items:Todo[], nextCursor:string|null, totalAll:number, totalFiltered:number }
+   *
+   * (Opcional) compat: "total" = totalFiltered
    */
   @Get()
   async list(
     @Req() req: any,
     @Query('take') takeRaw?: string,
-    @Query('limit') limitRaw?: string, // alias
+    @Query('limit') limitRaw?: string,
     @Query('cursor') cursorRaw?: string,
     @Query('q') qRaw?: string,
-    @Query('search') searchRaw?: string, // alias
+    @Query('search') searchRaw?: string,
     @Query('filter') filterRaw?: string,
-    @Query('status') statusRaw?: string, // alias do app
+    @Query('status') statusRaw?: string,
     @Query('done') doneRaw?: string,
-  ) {
+  ): Promise<{
+    ok: true;
+    items: any[];
+    nextCursor: string | null;
+    totalAll: number;
+    totalFiltered: number;
+    total: number; // compat
+  }> {
     const user = this.getUser(req);
 
     const take = parseTake(takeRaw ?? limitRaw, 10);
     const cursor = String(cursorRaw || '').trim() || undefined;
-
     const q = String(qRaw || searchRaw || '').trim() || undefined;
 
-    // prioridade: se vier done explícito, usa ele
     const doneParsed = parseDone(doneRaw);
-
-    // senão usa filter/status
     const effectiveFilterRaw = filterRaw ?? statusRaw;
     const filter = parseFilter(effectiveFilterRaw);
 
-    const { items, nextCursor, total } = await this.service.listPaged(user.uid, {
-      take,
-      cursor,
-      q,
-      filter,
-      done: doneParsed,
-    });
+    const { items, nextCursor, totalAll, totalFiltered } =
+      await this.service.listPaged(user.uid, {
+        take,
+        cursor,
+        q,
+        filter,
+        done: doneParsed,
+      });
 
-    return { ok: true, items, nextCursor, total };
+    return {
+      ok: true,
+      items: items || [],
+      nextCursor: nextCursor ?? null,
+      totalAll,
+      totalFiltered,
+      total: totalFiltered, // compat opcional
+    };
   }
 
   @Post()
@@ -114,10 +129,10 @@ export class TodosController {
   }
 
   /**
-   * ✅ BULK DELETE (recomendado)
    * DELETE /todos/bulk?filter=open|done|all&q=texto
    * Aliases aceitos:
    *  - status=open|done (alias de filter)
+   *  - search (alias de q)
    * Compat:
    *  - done=true|false tem prioridade
    *
@@ -127,9 +142,9 @@ export class TodosController {
   async removeBulk(
     @Req() req: any,
     @Query('q') qRaw?: string,
-    @Query('search') searchRaw?: string, // alias
+    @Query('search') searchRaw?: string,
     @Query('filter') filterRaw?: string,
-    @Query('status') statusRaw?: string, // alias do app
+    @Query('status') statusRaw?: string,
     @Query('done') doneRaw?: string,
   ) {
     const user = this.getUser(req);
@@ -148,8 +163,8 @@ export class TodosController {
   }
 
   /**
-   * ✅ (opcional) EXCLUIR TUDO sem filtro
    * DELETE /todos
+   * Exclui todas do usuário (sem filtro)
    */
   @Delete()
   async removeAll(@Req() req: any) {

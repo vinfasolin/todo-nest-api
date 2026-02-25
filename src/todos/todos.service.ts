@@ -1,9 +1,6 @@
 // src/todos/todos.service.ts
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, Todo as PrismaTodo } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type CreateTodoBody = {
@@ -26,9 +23,7 @@ export class TodosService {
   private normalizeTitle(title: unknown): string {
     const t = String(title ?? '').trim();
     if (!t) throw new BadRequestException('title is required');
-    if (t.length > 120) {
-      throw new BadRequestException('title is too long (max 120)');
-    }
+    if (t.length > 120) throw new BadRequestException('title is too long (max 120)');
     return t;
   }
 
@@ -54,21 +49,24 @@ export class TodosService {
 
   // cursor composto: "<createdAtISO>|<id>"
   private encodeCursor(createdAt: Date | string, id: string) {
-    const iso =
-      typeof createdAt === 'string' ? createdAt : createdAt.toISOString();
+    const iso = typeof createdAt === 'string' ? createdAt : createdAt.toISOString();
     return `${iso}|${id}`;
   }
 
   private decodeCursor(raw?: string): { createdAt?: Date; id?: string } {
     const s = String(raw ?? '').trim();
     if (!s) return {};
-    if (s.includes('|')) {
-      const [iso, id] = s.split('|');
+
+    const sep = s.indexOf('|');
+    if (sep >= 0) {
+      const iso = s.slice(0, sep);
+      const id = s.slice(sep + 1);
       const dt = new Date(String(iso));
       const tid = String(id ?? '').trim();
       if (!tid || Number.isNaN(dt.getTime())) return {};
       return { createdAt: dt, id: tid };
     }
+
     // compat antigo: só id (não recomendado, mas não quebra)
     return { id: s };
   }
@@ -92,8 +90,8 @@ export class TodosService {
   private buildWhere(
     userId: string,
     opts?: { q?: string; filter?: Filter; done?: boolean },
-  ) {
-    const where: any = { userId };
+  ): Prisma.TodoWhereInput {
+    const where: Prisma.TodoWhereInput = { userId };
 
     // done explícito tem prioridade
     if (opts?.done === true || opts?.done === false) {
@@ -116,10 +114,16 @@ export class TodosService {
   }
 
   /**
-   * ✅ total (count) com o MESMO filtro/busca do listPaged/removeBulk
-   * Útil para a tela exibir "Total no servidor: X".
+   * ✅ totalAll: total de itens do usuário (sem filtro/busca/done)
    */
-  async count(
+  async countAll(userId: string): Promise<number> {
+    return this.prisma.todo.count({ where: { userId } });
+  }
+
+  /**
+   * ✅ totalFiltered: total com o MESMO filtro/busca/done do listPaged/removeBulk
+   */
+  async countFiltered(
     userId: string,
     opts?: { q?: string; filter?: Filter; done?: boolean },
   ): Promise<number> {
@@ -139,6 +143,10 @@ export class TodosService {
    * Requer no schema.prisma:
    *  @@unique([userId, createdAt, id])
    * (Prisma gera: userId_createdAt_id)
+   *
+   * Retorna também:
+   *  - totalAll: total geral do usuário
+   *  - totalFiltered: total considerando filtros/busca atuais
    */
   async listPaged(
     userId: string,
@@ -149,15 +157,18 @@ export class TodosService {
       filter?: Filter;
       done?: boolean;
     },
-  ): Promise<{ items: any[]; nextCursor: string | null; total: number }> {
+  ): Promise<{
+    items: Array<Pick<PrismaTodo, 'id' | 'title' | 'description' | 'done' | 'createdAt' | 'updatedAt'>>;
+    nextCursor: string | null;
+    totalAll: number;
+    totalFiltered: number;
+  }> {
     const takeNum = Number(opts?.take);
-    const take = Number.isFinite(takeNum)
-      ? Math.min(Math.max(takeNum, 1), 50)
-      : 10;
+    const take = Number.isFinite(takeNum) ? Math.min(Math.max(takeNum, 1), 50) : 10;
 
     const cursorRaw = String(opts?.cursor || '').trim() || undefined;
 
-    const where = this.buildWhere(userId, {
+    const whereFiltered = this.buildWhere(userId, {
       q: opts?.q,
       filter: (opts?.filter ?? 'all') as Filter,
       done: opts?.done,
@@ -172,16 +183,14 @@ export class TodosService {
       !Number.isNaN(decoded.createdAt.getTime()) &&
       !!decoded.id;
 
-    // ✅ pega total em paralelo (mesmo WHERE)
-    const [items, total] = await Promise.all([
+    const [items, totalAll, totalFiltered] = await Promise.all([
       this.prisma.todo.findMany({
-        where,
+        where: whereFiltered,
         orderBy,
         take,
         ...(useComposite
           ? {
               cursor: {
-                // ✅ cursor composto baseado no @@unique([userId, createdAt, id])
                 userId_createdAt_id: {
                   userId,
                   createdAt: decoded.createdAt!,
@@ -192,7 +201,6 @@ export class TodosService {
             }
           : decoded.id
           ? {
-              // compat antigo (cursor só por id) — não ideal, mas não quebra
               cursor: { id: decoded.id },
               skip: 1,
             }
@@ -206,18 +214,20 @@ export class TodosService {
           updatedAt: true,
         },
       }),
-      this.prisma.todo.count({ where }),
+
+      // total geral (sem filtro)
+      this.prisma.todo.count({ where: { userId } }),
+
+      // total filtrado (com o mesmo where do findMany)
+      this.prisma.todo.count({ where: whereFiltered }),
     ]);
 
     const nextCursor =
       items.length === take
-        ? this.encodeCursor(
-            items[items.length - 1]?.createdAt,
-            String(items[items.length - 1]?.id),
-          )
+        ? this.encodeCursor(items[items.length - 1]?.createdAt, String(items[items.length - 1]?.id))
         : null;
 
-    return { items, nextCursor, total };
+    return { items, nextCursor, totalAll, totalFiltered };
   }
 
   async create(userId: string, body: CreateTodoBody) {
@@ -255,15 +265,11 @@ export class TodosService {
     }
 
     if (body.done !== undefined) {
-      if (typeof body.done !== 'boolean') {
-        throw new BadRequestException('done must be boolean');
-      }
+      if (typeof body.done !== 'boolean') throw new BadRequestException('done must be boolean');
       data.done = body.done;
     }
 
-    if (Object.keys(data).length === 0) {
-      throw new BadRequestException('No fields to update');
-    }
+    if (Object.keys(data).length === 0) throw new BadRequestException('No fields to update');
 
     return this.prisma.todo.update({
       where: { id: todoId },
