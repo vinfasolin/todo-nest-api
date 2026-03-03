@@ -11,181 +11,179 @@ import {
   Req,
   UnauthorizedException,
   UseGuards,
-} from '@nestjs/common';
-import { JwtAuthGuard, AuthUser } from '../auth/jwt.guard';
-import { TodosService } from './todos.service';
+} from "@nestjs/common";
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiTags,
+  ApiUnauthorizedResponse,
+  ApiUnprocessableEntityResponse,
+  ApiBadRequestResponse,
+} from "@nestjs/swagger";
+import type { Request } from "express";
 
-type CreateTodoBody = {
-  title?: string;
-  description?: string;
-};
+import { JwtAuthGuard } from "../auth/jwt.guard";
+import { TodosService } from "./todos.service";
 
-type UpdateTodoBody = {
-  title?: string;
-  description?: string | null;
-  done?: boolean;
-};
+import {
+  CreateTodoDto,
+  UpdateTodoDto,
+  TodoDto,
+  TodoListResponseDto,
+  TodoResponseDto,
+  DeletedResponseDto,
+  OkResponseDto,
+  ListTodosQueryDto,
+  BulkTodosQueryDto,
+  TodoIdParamDto,
+} from "./dto/todos.dto";
 
-type Filter = 'all' | 'open' | 'done';
-
-function parseTake(raw: any, fallback = 10) {
-  const n = parseInt(String(raw ?? fallback), 10);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(Math.max(n, 1), 50);
-}
-
-function parseFilter(raw: any): Filter {
-  const v = String(raw ?? 'all').trim().toLowerCase();
-  if (v === 'open' || v === 'done') return v;
-  return 'all';
-}
-
-function parseDone(raw: any): boolean | undefined {
-  if (raw === undefined || raw === null || raw === '') return undefined;
-  const v = String(raw).trim().toLowerCase();
-  if (v === 'true' || v === '1' || v === 'yes') return true;
-  if (v === 'false' || v === '0' || v === 'no') return false;
-  return undefined;
-}
-
-@Controller('todos')
+@ApiTags("Todos")
+@ApiBearerAuth("access-token")
+@Controller("todos")
 @UseGuards(JwtAuthGuard)
 export class TodosController {
   constructor(private readonly service: TodosService) {}
 
-  private getUser(req: any): AuthUser {
-    const u = req.user as AuthUser | undefined;
-    if (!u?.uid) throw new UnauthorizedException('Missing auth user');
-    return u;
+  private getUid(req: Request): string {
+    const uid = (req as any).user?.uid as string | undefined;
+    if (!uid) throw new UnauthorizedException("Missing auth user");
+    return uid;
   }
 
-  /**
-   * GET /todos?take=10&cursor=<cursor>&q=texto&filter=all|open|done
-   * Aliases aceitos:
-   *  - status=open|done (alias de filter)
-   *  - limit (alias de take)
-   *  - search (alias de q)
-   * Compat:
-   *  - done=true|false tem prioridade sobre filter/status
-   *
-   * Retorna:
-   *  { ok:true, items:Todo[], nextCursor:string|null, totalAll:number, totalFiltered:number }
-   *
-   * (Opcional) compat: "total" = totalFiltered
-   */
   @Get()
+  @ApiOperation({
+    summary:
+      "Lista To-Dos (paginação cursor-based + busca/filtro server-side + totais)",
+  })
+  @ApiOkResponse({ description: "Lista paginada", type: TodoListResponseDto })
+  @ApiUnprocessableEntityResponse({ description: "Query inválida (DTO)" })
+  @ApiUnauthorizedResponse({ description: "JWT ausente/inválido" })
   async list(
-    @Req() req: any,
-    @Query('take') takeRaw?: string,
-    @Query('limit') limitRaw?: string,
-    @Query('cursor') cursorRaw?: string,
-    @Query('q') qRaw?: string,
-    @Query('search') searchRaw?: string,
-    @Query('filter') filterRaw?: string,
-    @Query('status') statusRaw?: string,
-    @Query('done') doneRaw?: string,
-  ): Promise<{
-    ok: true;
-    items: any[];
-    nextCursor: string | null;
-    totalAll: number;
-    totalFiltered: number;
-    total: number; // compat
-  }> {
-    const user = this.getUser(req);
-
-    const take = parseTake(takeRaw ?? limitRaw, 10);
-    const cursor = String(cursorRaw || '').trim() || undefined;
-    const q = String(qRaw || searchRaw || '').trim() || undefined;
-
-    const doneParsed = parseDone(doneRaw);
-    const effectiveFilterRaw = filterRaw ?? statusRaw;
-    const filter = parseFilter(effectiveFilterRaw);
+    @Req() req: Request,
+    @Query() query: ListTodosQueryDto,
+  ): Promise<TodoListResponseDto> {
+    const uid = this.getUid(req);
 
     const { items, nextCursor, totalAll, totalFiltered } =
-      await this.service.listPaged(user.uid, {
-        take,
-        cursor,
-        q,
-        filter,
-        done: doneParsed,
+      await this.service.listPaged(uid, {
+        take: query.take,
+        cursor: query.cursor ?? undefined,
+        q: query.q ?? undefined,
+        filter: (query.filter ?? "all") as any, // ✅ default consistente
+        done: query.done,
       });
 
     return {
       ok: true,
-      items: items || [],
+      items: (items || []) as unknown as TodoDto[],
       nextCursor: nextCursor ?? null,
       totalAll,
       totalFiltered,
-      total: totalFiltered, // compat opcional
+      total: totalFiltered, // compat
     };
   }
 
+  // ✅ GET /todos/:id
+  @Get(":id")
+  @ApiOperation({ summary: "Retorna um To-Do por id" })
+  @ApiParam({ name: "id", example: "ckxyz..." })
+  @ApiOkResponse({ description: "Encontrado", type: TodoResponseDto })
+  @ApiNotFoundResponse({ description: "To-Do não encontrado" })
+  @ApiUnprocessableEntityResponse({ description: "Parâmetro inválido (DTO)" })
+  @ApiUnauthorizedResponse({ description: "JWT ausente/inválido" })
+  async getOne(
+    @Req() req: Request,
+    @Param() params: TodoIdParamDto,
+  ): Promise<TodoResponseDto> {
+    const uid = this.getUid(req);
+    const todo = await this.service.getById(uid, params.id);
+    return { ok: true, todo: todo as any };
+  }
+
   @Post()
-  async create(@Req() req: any, @Body() body: CreateTodoBody) {
-    const user = this.getUser(req);
-    const todo = await this.service.create(user.uid, body);
-    return { ok: true, todo };
-  }
+  @ApiOperation({ summary: "Cria um To-Do" })
+  @ApiBody({ type: CreateTodoDto })
+  @ApiOkResponse({ description: "Criado", type: TodoResponseDto })
+  @ApiUnprocessableEntityResponse({
+    description: "Payload inválido (DTO) / title obrigatório",
+  })
+  @ApiUnauthorizedResponse({ description: "JWT ausente/inválido" })
+  async create(
+    @Req() req: Request,
+    @Body() body: CreateTodoDto,
+  ): Promise<TodoResponseDto> {
+    const uid = this.getUid(req);
 
-  /**
-   * DELETE /todos/bulk?filter=open|done|all&q=texto
-   * Aliases aceitos:
-   *  - status=open|done (alias de filter)
-   *  - search (alias de q)
-   * Compat:
-   *  - done=true|false tem prioridade
-   *
-   * Retorno: { ok:true, deleted:number }
-   */
-  @Delete('bulk')
-  async removeBulk(
-    @Req() req: any,
-    @Query('q') qRaw?: string,
-    @Query('search') searchRaw?: string,
-    @Query('filter') filterRaw?: string,
-    @Query('status') statusRaw?: string,
-    @Query('done') doneRaw?: string,
-  ) {
-    const user = this.getUser(req);
-
-    const q = String(qRaw || searchRaw || '').trim() || undefined;
-    const doneParsed = parseDone(doneRaw);
-
-    const effectiveFilterRaw = filterRaw ?? statusRaw;
-    const filter = parseFilter(effectiveFilterRaw);
-
-    return this.service.removeBulk(user.uid, {
-      q,
-      filter,
-      done: doneParsed,
+    const todo = await this.service.create(uid, {
+      title: body.title,
+      description: body.description ?? undefined,
     });
+
+    return { ok: true, todo: todo as any };
   }
 
-  /**
-   * DELETE /todos
-   * Exclui todas do usuário (sem filtro)
-   */
+  @Delete("bulk")
+  @ApiOperation({ summary: "Exclui em massa por filtro/busca (bulk delete)" })
+  @ApiOkResponse({ description: "Quantidade excluída", type: DeletedResponseDto })
+  @ApiUnprocessableEntityResponse({ description: "Query inválida (DTO)" })
+  @ApiUnauthorizedResponse({ description: "JWT ausente/inválido" })
+  async removeBulk(
+    @Req() req: Request,
+    @Query() query: BulkTodosQueryDto,
+  ): Promise<DeletedResponseDto> {
+    const uid = this.getUid(req);
+
+    return (await this.service.removeBulk(uid, {
+      q: query.q ?? undefined,
+      filter: (query.filter ?? "all") as any, // ✅ default consistente
+      done: query.done,
+    })) as any;
+  }
+
   @Delete()
-  async removeAll(@Req() req: any) {
-    const user = this.getUser(req);
-    return this.service.removeAll(user.uid);
+  @ApiOperation({ summary: "Exclui TODOS os To-Dos do usuário (sem filtro)" })
+  @ApiOkResponse({ description: "Quantidade excluída", type: DeletedResponseDto })
+  @ApiUnauthorizedResponse({ description: "JWT ausente/inválido" })
+  async removeAll(@Req() req: Request): Promise<DeletedResponseDto> {
+    const uid = this.getUid(req);
+    return (await this.service.removeAll(uid)) as any;
   }
 
-  @Patch(':id')
+  @Patch(":id")
+  @ApiOperation({ summary: "Atualiza um To-Do" })
+  @ApiParam({ name: "id", example: "ckxyz..." })
+  @ApiBody({ type: UpdateTodoDto })
+  @ApiOkResponse({ description: "Atualizado", type: TodoResponseDto })
+  @ApiUnprocessableEntityResponse({ description: "Payload/parâmetro inválido (DTO)" })
+  @ApiBadRequestResponse({ description: "Requisição inválida (ex.: update sem campos)" })
+  @ApiUnauthorizedResponse({ description: "JWT ausente/inválido" })
   async update(
-    @Req() req: any,
-    @Param('id') id: string,
-    @Body() body: UpdateTodoBody,
-  ) {
-    const user = this.getUser(req);
-    const todo = await this.service.update(user.uid, String(id || '').trim(), body);
-    return { ok: true, todo };
+    @Req() req: Request,
+    @Param() params: TodoIdParamDto,
+    @Body() body: UpdateTodoDto,
+  ): Promise<TodoResponseDto> {
+    const uid = this.getUid(req);
+    const todo = await this.service.update(uid, params.id, body);
+    return { ok: true, todo: todo as any };
   }
 
-  @Delete(':id')
-  async remove(@Req() req: any, @Param('id') id: string) {
-    const user = this.getUser(req);
-    return this.service.remove(user.uid, String(id || '').trim());
+  @Delete(":id")
+  @ApiOperation({ summary: "Exclui um To-Do" })
+  @ApiParam({ name: "id", example: "ckxyz..." })
+  @ApiOkResponse({ description: "Excluído", type: OkResponseDto })
+  @ApiUnprocessableEntityResponse({ description: "Parâmetro inválido (DTO)" })
+  @ApiUnauthorizedResponse({ description: "JWT ausente/inválido" })
+  async remove(
+    @Req() req: Request,
+    @Param() params: TodoIdParamDto,
+  ): Promise<OkResponseDto> {
+    const uid = this.getUid(req);
+    await this.service.remove(uid, params.id);
+    return { ok: true };
   }
 }

@@ -1,22 +1,40 @@
+// src/app.controller.spec.ts
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
-import { AppService } from './app.service';
-//src/app.controller.spec.ts
+import { PrismaService } from './prisma/prisma.service';
+
 describe('AppController', () => {
   let appController: AppController;
 
+  const prismaMock = {
+    playingWithNeon: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+  };
+
   beforeEach(async () => {
-    const app: TestingModule = await Test.createTestingModule({
+    const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService],
+      providers: [{ provide: PrismaService, useValue: prismaMock }],
     }).compile();
 
-    appController = app.get<AppController>(AppController);
+    appController = moduleRef.get<AppController>(AppController);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+  it('GET / -> hello() retorna "OK"', () => {
+    expect(appController.hello()).toBe('OK');
+  });
+
+  it('GET /db -> retorna ok:true e rows (mockados)', async () => {
+    prismaMock.playingWithNeon.findMany.mockResolvedValueOnce([{ id: 1 }]);
+
+    const res = await appController.dbTest();
+
+    expect(prismaMock.playingWithNeon.findMany).toHaveBeenCalledWith({
+      take: 5,
+      orderBy: { id: 'desc' },
     });
+
+    expect(res).toEqual({ ok: true, rows: [{ id: 1 }] });
   });
 });

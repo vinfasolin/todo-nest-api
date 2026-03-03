@@ -1,6 +1,7 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { OAuth2Client } from 'google-auth-library';
-//src/auth/google.strategy.ts
+// src/auth/google.strategy.ts
+import { Injectable, Logger, UnauthorizedException } from "@nestjs/common";
+import { OAuth2Client } from "google-auth-library";
+
 type GooglePayload = {
   sub: string;
   email: string;
@@ -11,39 +12,40 @@ type GooglePayload = {
 
 @Injectable()
 export class GoogleIdTokenVerifier {
-  // fallback (o que você já tinha)
   private static readonly FALLBACK_CLIENT_ID =
-    '764728744073-4h8l7638uom853plt0hdsicn9avugf3p.apps.googleusercontent.com';
+    "764728744073-4h8l7638uom853plt0hdsicn9avugf3p.apps.googleusercontent.com";
+
+  private readonly logger = new Logger(GoogleIdTokenVerifier.name);
 
   private readonly client: OAuth2Client;
   private readonly audiences: string[];
 
   constructor() {
-    const envClient = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+    const envClient = String(process.env.GOOGLE_CLIENT_ID || "").trim();
 
     // ✅ aceita o client do .env + fallback (sem duplicar e sem vazios)
     this.audiences = [envClient, GoogleIdTokenVerifier.FALLBACK_CLIENT_ID]
       .filter(Boolean)
       .filter((v, i, arr) => arr.indexOf(v) === i);
 
-    // ✅ não “trava” no audience no construtor; passa no verifyIdToken
+    // ✅ cria client “genérico”; o audience é validado no verifyIdToken
     this.client = new OAuth2Client();
   }
 
   async verify(idToken: string): Promise<GooglePayload> {
-    const token = String(idToken || '').trim();
-    if (!token) throw new UnauthorizedException('Missing Google ID token');
+    const token = String(idToken || "").trim();
+    if (!token) throw new UnauthorizedException("Missing Google ID token");
 
     try {
       const ticket = await this.client.verifyIdToken({
         idToken: token,
-        audience: this.audiences, // ✅ aceita string[]
+        audience: this.audiences, // ✅ string[]
       });
 
       const payload = ticket.getPayload() as any;
 
       if (!payload?.sub || !payload?.email) {
-        throw new UnauthorizedException('Invalid Google token payload');
+        throw new UnauthorizedException("Invalid Google token payload");
       }
 
       return {
@@ -52,19 +54,26 @@ export class GoogleIdTokenVerifier {
         name: payload.name ? String(payload.name) : undefined,
         picture: payload.picture ? String(payload.picture) : undefined,
         email_verified:
-          typeof payload.email_verified === 'boolean'
+          typeof payload.email_verified === "boolean"
             ? payload.email_verified
             : undefined,
       };
     } catch (err: any) {
-      // ✅ loga o motivo real sem vazar token
-      console.error('Google ID token verify failed:', {
-        name: err?.name,
-        message: err?.message,
-        audiences: this.audiences,
-      });
+      // ✅ não polui testes
+      const isTest = process.env.NODE_ENV === "test";
 
-      throw new UnauthorizedException('Invalid or expired Google ID token');
+      // ✅ loga motivo real sem vazar token (somente fora de testes)
+      if (!isTest) {
+        const name = err?.name ? String(err.name) : "Error";
+        const message = err?.message ? String(err.message) : "Unknown error";
+        this.logger.warn("Google ID token verify failed", {
+          name,
+          message,
+          audiences: this.audiences,
+        });
+      }
+
+      throw new UnauthorizedException("Invalid or expired Google ID token");
     }
   }
 }

@@ -1,19 +1,21 @@
-import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+// src/auth/auth.module.ts
+import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
 
-import { AuthController } from './auth.controller';
-import { GoogleIdTokenVerifier } from './google.strategy';
-import { PrismaModule } from '../prisma/prisma.module';
-import { MailModule } from '../mail/mail.module';
-import { PasswordResetService } from './password-reset.service';
+import { AuthController } from "./auth.controller";
+import { GoogleIdTokenVerifier } from "./google.strategy";
+import { PrismaModule } from "../prisma/prisma.module";
+import { MailModule } from "../mail/mail.module";
+import { PasswordResetService } from "./password-reset.service";
 
 @Module({
   imports: [
     PrismaModule,
     MailModule,
+
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'dev-secret-change-me',
-      signOptions: { expiresIn: '7d' },
+      // ✅ não “trava” env aqui; o secret é passado em sign/verify
+      signOptions: { expiresIn: "7d" },
     }),
   ],
   controllers: [AuthController],
